@@ -15,6 +15,22 @@ struct FocusSessionRecord: Codable, Identifiable, Hashable {
     }
 }
 
+enum HistoryScope: String, CaseIterable, Identifiable {
+    case week = "周视图"
+    case month = "月视图"
+
+    var id: String { rawValue }
+}
+
+struct HistoryDaySummary: Identifiable {
+    var id: String { dateKey }
+
+    let date: Date
+    let dateKey: String
+    let dayLabel: String
+    let count: Int
+}
+
 @MainActor
 final class ClockViewModel: ObservableObject {
     private static let sessionsBeforeLongBreak = 4
@@ -128,18 +144,73 @@ final class ClockViewModel: ObservableObject {
         return "番茄时钟 · \(pomodoroDisplayText)"
     }
 
-    var groupedFocusHistory: [(day: String, records: [FocusSessionRecord])] {
-        let grouped = Dictionary(grouping: focusHistory) { record in
-            dayFormatter.string(from: record.completedAt)
-        }
-
-        return grouped
-            .map { (day: $0.key, records: $0.value.sorted { $0.completedAt > $1.completedAt }) }
-            .sorted { $0.day > $1.day }
-    }
-
     var latestHistoryPreview: [FocusSessionRecord] {
         Array(focusHistory.prefix(5))
+    }
+
+    func historyPeriodTitle(for scope: HistoryScope, anchorDate: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+
+        switch scope {
+        case .week:
+            let interval = historyInterval(for: scope, anchorDate: anchorDate)
+            formatter.dateFormat = "MM.dd"
+            let start = formatter.string(from: interval.start)
+            let end = formatter.string(from: calendar.date(byAdding: .day, value: -1, to: interval.end) ?? interval.start)
+            return "\(start) - \(end)"
+        case .month:
+            formatter.dateFormat = "yyyy年MM月"
+            return formatter.string(from: anchorDate)
+        }
+    }
+
+    func shiftedHistoryAnchor(from anchorDate: Date, scope: HistoryScope, offset: Int) -> Date {
+        switch scope {
+        case .week:
+            return calendar.date(byAdding: .day, value: 7 * offset, to: anchorDate) ?? anchorDate
+        case .month:
+            return calendar.date(byAdding: .month, value: offset, to: anchorDate) ?? anchorDate
+        }
+    }
+
+    func historySections(for scope: HistoryScope, anchorDate: Date) -> [(day: String, date: Date, records: [FocusSessionRecord])] {
+        let interval = historyInterval(for: scope, anchorDate: anchorDate)
+        let filtered = focusHistory.filter { interval.contains($0.completedAt) }
+        let grouped = Dictionary(grouping: filtered) { calendar.startOfDay(for: $0.completedAt) }
+
+        return grouped
+            .map { day, records in
+                (
+                    day: dayString(for: day),
+                    date: day,
+                    records: records.sorted { $0.completedAt > $1.completedAt }
+                )
+            }
+            .sorted { $0.date > $1.date }
+    }
+
+    func historySummaries(for scope: HistoryScope, anchorDate: Date) -> [HistoryDaySummary] {
+        let interval = historyInterval(for: scope, anchorDate: anchorDate)
+        let filtered = focusHistory.filter { interval.contains($0.completedAt) }
+        let counts = Dictionary(grouping: filtered) { calendar.startOfDay(for: $0.completedAt) }
+            .mapValues(\.count)
+
+        var summaries: [HistoryDaySummary] = []
+        var current = interval.start
+        while current < interval.end {
+            summaries.append(
+                HistoryDaySummary(
+                    date: current,
+                    dateKey: storageDayString(for: current),
+                    dayLabel: compactDayString(for: current, scope: scope),
+                    count: counts[calendar.startOfDay(for: current)] ?? 0
+                )
+            )
+            current = calendar.date(byAdding: .day, value: 1, to: current) ?? interval.end
+        }
+
+        return summaries
     }
 
     func bootstrap() {
@@ -425,6 +496,39 @@ final class ClockViewModel: ObservableObject {
         return formatter
     }
 
+    private var calendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "zh_CN")
+        calendar.firstWeekday = 2
+        return calendar
+    }
+
+    private func historyInterval(for scope: HistoryScope, anchorDate: Date) -> DateInterval {
+        switch scope {
+        case .week:
+            let weekInterval = calendar.dateInterval(of: .weekOfYear, for: anchorDate)
+            return weekInterval ?? DateInterval(start: calendar.startOfDay(for: anchorDate), duration: 7 * 24 * 60 * 60)
+        case .month:
+            let monthInterval = calendar.dateInterval(of: .month, for: anchorDate)
+            return monthInterval ?? DateInterval(start: calendar.startOfDay(for: anchorDate), duration: 31 * 24 * 60 * 60)
+        }
+    }
+
+    private func storageDayString(for date: Date) -> String {
+        dayFormatter.string(from: date)
+    }
+
+    private func compactDayString(for date: Date, scope: HistoryScope) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = scope == .week ? "E\nd" : "MM/dd"
+        return formatter.string(from: date)
+    }
+
+    func dayString(for date: Date) -> String {
+        dayFormatter.string(from: date)
+    }
+
     func timeString(for date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
@@ -435,6 +539,8 @@ final class ClockViewModel: ObservableObject {
 
 struct ClockView: View {
     @ObservedObject var viewModel: ClockViewModel
+    @State private var historyScope: HistoryScope = .week
+    @State private var historyAnchorDate: Date = Date()
 
     var body: some View {
         GeometryReader { proxy in
@@ -571,53 +677,25 @@ struct ClockView: View {
     }
 
     private func historyPanel(scale: CGFloat, panelWidth: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 14 * scale) {
-            Text("专注历史")
-                .font(.system(size: 20 * scale, weight: .semibold, design: .rounded))
-                .foregroundStyle(Color.white.opacity(0.92))
+        let summaries = viewModel.historySummaries(for: historyScope, anchorDate: historyAnchorDate)
+        let sections = viewModel.historySections(for: historyScope, anchorDate: historyAnchorDate)
+        let gridColumns = Array(repeating: GridItem(.flexible(), spacing: 10 * scale), count: historyScope == .week ? 7 : 4)
 
-            if viewModel.groupedFocusHistory.isEmpty {
-                Text("还没有完成记录，开始一个番茄钟后会在这里按天回顾。")
+        return VStack(alignment: .leading, spacing: 14 * scale) {
+            historyHeader(scale: scale)
+            historyNavigation(scale: scale)
+            historySummaryGrid(scale: scale, summaries: summaries, gridColumns: gridColumns)
+
+            if sections.isEmpty {
+                Text("当前范围内还没有完成记录，开始一个番茄钟后会在这里按周或按月回顾。")
                     .font(.system(size: 15 * scale, weight: .medium, design: .rounded))
                     .foregroundStyle(Color.white.opacity(0.7))
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16 * scale) {
-                        ForEach(viewModel.groupedFocusHistory, id: \.day) { section in
-                            VStack(alignment: .leading, spacing: 10 * scale) {
-                                HStack {
-                                    Text(section.day)
-                                        .font(.system(size: 16 * scale, weight: .bold, design: .rounded))
-                                        .foregroundStyle(Color(red: 0.98, green: 0.89, blue: 0.64))
-                                    Spacer()
-                                    Text("\(section.records.count) 次")
-                                        .font(.system(size: 13 * scale, weight: .medium, design: .rounded))
-                                        .foregroundStyle(Color.white.opacity(0.6))
-                                }
-
-                                ForEach(section.records) { record in
-                                    HStack {
-                                        Text(viewModel.timeString(for: record.completedAt))
-                                            .font(.system(size: 14 * scale, weight: .medium, design: .monospaced))
-                                            .foregroundStyle(Color.white.opacity(0.85))
-                                        Spacer()
-                                        Text("15 分钟专注")
-                                            .font(.system(size: 13 * scale, weight: .medium, design: .rounded))
-                                            .foregroundStyle(Color(red: 0.69, green: 0.94, blue: 0.85))
-                                    }
-                                    .padding(.horizontal, 14 * scale)
-                                    .padding(.vertical, 10 * scale)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 16 * scale, style: .continuous)
-                                            .fill(Color.white.opacity(0.05))
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-                .frame(maxHeight: 220 * scale)
+                historySectionList(scale: scale, sections: sections)
             }
+        }
+        .onChange(of: historyScope) { _ in
+            historyAnchorDate = Date()
         }
         .padding(.horizontal, 22 * scale)
         .padding(.vertical, 20 * scale)
@@ -630,6 +708,123 @@ struct ClockView: View {
             RoundedRectangle(cornerRadius: 24 * scale, style: .continuous)
                 .stroke(Color.white.opacity(0.10), lineWidth: max(1, scale))
         )
+    }
+
+    private func historyHeader(scale: CGFloat) -> some View {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 6 * scale) {
+                Text("专注历史")
+                    .font(.system(size: 20 * scale, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Color.white.opacity(0.92))
+
+                Text(viewModel.historyPeriodTitle(for: historyScope, anchorDate: historyAnchorDate))
+                    .font(.system(size: 14 * scale, weight: .medium, design: .rounded))
+                    .foregroundStyle(Color.white.opacity(0.64))
+            }
+
+            Spacer()
+
+            Picker("历史范围", selection: $historyScope) {
+                ForEach(HistoryScope.allCases) { scope in
+                    Text(scope.rawValue).tag(scope)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 170 * scale)
+        }
+    }
+
+    private func historyNavigation(scale: CGFloat) -> some View {
+        HStack(spacing: 10 * scale) {
+            Button {
+                historyAnchorDate = viewModel.shiftedHistoryAnchor(from: historyAnchorDate, scope: historyScope, offset: -1)
+            } label: {
+                Label("上一段", systemImage: "chevron.left")
+            }
+            .buttonStyle(.borderless)
+
+            Button {
+                historyAnchorDate = Date()
+            } label: {
+                Text(historyScope == .week ? "回到本周" : "回到本月")
+            }
+            .buttonStyle(.borderless)
+
+            Button {
+                historyAnchorDate = viewModel.shiftedHistoryAnchor(from: historyAnchorDate, scope: historyScope, offset: 1)
+            } label: {
+                Label("下一段", systemImage: "chevron.right")
+            }
+            .buttonStyle(.borderless)
+        }
+        .font(.system(size: 13 * scale, weight: .medium, design: .rounded))
+        .foregroundStyle(Color.white.opacity(0.82))
+    }
+
+    private func historySummaryGrid(scale: CGFloat, summaries: [HistoryDaySummary], gridColumns: [GridItem]) -> some View {
+        LazyVGrid(columns: gridColumns, spacing: 10 * scale) {
+            ForEach(summaries) { summary in
+                historySummaryCard(scale: scale, summary: summary)
+            }
+        }
+    }
+
+    private func historySummaryCard(scale: CGFloat, summary: HistoryDaySummary) -> some View {
+        VStack(spacing: 8 * scale) {
+            Text(summary.dayLabel)
+                .font(.system(size: 12 * scale, weight: .medium, design: .rounded))
+                .foregroundStyle(Color.white.opacity(0.68))
+                .multilineTextAlignment(.center)
+
+            Text("\(summary.count)")
+                .font(.system(size: 20 * scale, weight: .bold, design: .rounded))
+                .foregroundStyle(summary.count > 0 ? Color(red: 0.98, green: 0.89, blue: 0.64) : Color.white.opacity(0.42))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12 * scale)
+        .background(
+            RoundedRectangle(cornerRadius: 14 * scale, style: .continuous)
+                .fill(summary.count > 0 ? Color.white.opacity(0.10) : Color.white.opacity(0.04))
+        )
+    }
+
+    private func historySectionList(scale: CGFloat, sections: [(day: String, date: Date, records: [FocusSessionRecord])]) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16 * scale) {
+                ForEach(sections, id: \.day) { section in
+                    VStack(alignment: .leading, spacing: 10 * scale) {
+                        HStack {
+                            Text(section.day)
+                                .font(.system(size: 16 * scale, weight: .bold, design: .rounded))
+                                .foregroundStyle(Color(red: 0.98, green: 0.89, blue: 0.64))
+                            Spacer()
+                            Text("\(section.records.count) 次")
+                                .font(.system(size: 13 * scale, weight: .medium, design: .rounded))
+                                .foregroundStyle(Color.white.opacity(0.6))
+                        }
+
+                        ForEach(section.records) { record in
+                            HStack {
+                                Text(viewModel.timeString(for: record.completedAt))
+                                    .font(.system(size: 14 * scale, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Color.white.opacity(0.85))
+                                Spacer()
+                                Text("15 分钟专注")
+                                    .font(.system(size: 13 * scale, weight: .medium, design: .rounded))
+                                    .foregroundStyle(Color(red: 0.69, green: 0.94, blue: 0.85))
+                            }
+                            .padding(.horizontal, 14 * scale)
+                            .padding(.vertical, 10 * scale)
+                            .background(
+                                RoundedRectangle(cornerRadius: 16 * scale, style: .continuous)
+                                    .fill(Color.white.opacity(0.05))
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxHeight: 220 * scale)
     }
 
     private func layoutScale(for size: CGSize) -> CGFloat {
