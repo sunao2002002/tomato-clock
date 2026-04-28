@@ -22,6 +22,7 @@ final class ClockViewModel: ObservableObject {
     private static let completedTodayPomodoroKey = "completedTodayPomodoroCount"
     private static let pomodoroStatsDateKey = "pomodoroStatsDate"
     private static let focusHistoryKey = "focusHistoryRecords"
+    private static let menuBarOnlyModeKey = "menuBarOnlyModeEnabled"
 
     enum PomodoroPhase {
         case focus
@@ -71,6 +72,7 @@ final class ClockViewModel: ObservableObject {
     @Published var isPomodoroRunning: Bool = false
     @Published var isAlertVisible: Bool = false
     @Published var pomodoroPhase: PomodoroPhase = .focus
+    @Published var isMenuBarOnlyModeEnabled: Bool
     @Published private(set) var focusHistory: [FocusSessionRecord]
 
     private let formatter: DateFormatter
@@ -86,6 +88,7 @@ final class ClockViewModel: ObservableObject {
         self.client = client
         self.completedPomodoroCount = UserDefaults.standard.integer(forKey: Self.completedPomodoroKey)
         self.completedTodayPomodoroCount = UserDefaults.standard.integer(forKey: Self.completedTodayPomodoroKey)
+        self.isMenuBarOnlyModeEnabled = UserDefaults.standard.bool(forKey: Self.menuBarOnlyModeKey)
         self.focusHistory = Self.loadFocusHistory()
         self.notificationsAvailable = Bundle.main.bundleURL.pathExtension == "app"
 
@@ -218,6 +221,11 @@ final class ClockViewModel: ObservableObject {
         if !isPomodoroRunning {
             pomodoroStatusText = readyStatusText(for: pomodoroPhase)
         }
+    }
+
+    func setMenuBarOnlyMode(_ enabled: Bool) {
+        isMenuBarOnlyModeEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: Self.menuBarOnlyModeKey)
     }
 
     private func updatePomodoroIfNeeded() {
@@ -633,6 +641,7 @@ struct ClockView: View {
 
 struct MenuBarClockView: View {
     @ObservedObject var viewModel: ClockViewModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -659,6 +668,27 @@ struct MenuBarClockView: View {
 
                 Button("重置") {
                     viewModel.resetPomodoro()
+                }
+            }
+
+            Toggle("仅菜单栏运行", isOn: Binding(
+                get: { viewModel.isMenuBarOnlyModeEnabled },
+                set: { enabled in
+                    viewModel.setMenuBarOnlyMode(enabled)
+                    if enabled {
+                        MainWindowController.hideMainWindow()
+                    } else {
+                        MainWindowController.showMainWindow(using: openWindow)
+                    }
+                }
+            ))
+
+            Button(viewModel.isMenuBarOnlyModeEnabled ? "显示主窗口" : "隐藏主窗口") {
+                if viewModel.isMenuBarOnlyModeEnabled {
+                    viewModel.setMenuBarOnlyMode(false)
+                    MainWindowController.showMainWindow(using: openWindow)
+                } else {
+                    MainWindowController.hideMainWindow()
                 }
             }
 
