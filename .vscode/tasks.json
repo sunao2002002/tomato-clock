@@ -1,0 +1,24 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Package App",
+      "type": "shell",
+      "command": "./scripts/package_app.sh",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Open Packaged App",
+      "type": "shell",
+      "command": "./scripts/open_app.sh",
+      "problemMatcher": []
+    },
+    {
+      "label": "Archive Signed App",
+      "type": "shell",
+      "command": "./scripts/archive_app.sh",
+      "problemMatcher": []
+    }
+  ]
+}
