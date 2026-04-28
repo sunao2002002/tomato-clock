@@ -5,15 +5,15 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>zh_CN</string>
     <key>CFBundleDisplayName</key>
-    <string>NTPClock</string>
+    <string>番茄时钟</string>
     <key>CFBundleExecutable</key>
     <string>NTPClock</string>
     <key>CFBundleIdentifier</key>
-    <string>com.myproject.ntpclock</string>
+    <string>com.myproject.tomato-clock</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>NTPClock</string>
+    <string>番茄时钟</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

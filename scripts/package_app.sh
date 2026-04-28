@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PRODUCT_NAME="NTPClock"
-APP_NAME="${PRODUCT_NAME}.app"
+APP_NAME="番茄时钟.app"
 APP_DIR="${ROOT_DIR}/dist/${APP_NAME}"
 CONTENTS_DIR="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"

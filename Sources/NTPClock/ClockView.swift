@@ -122,7 +122,7 @@ final class ClockViewModel: ObservableObject {
             return "\(pomodoroPhase.title) · \(pomodoroDisplayText)"
         }
 
-        return "NTPClock · \(pomodoroDisplayText)"
+        return "番茄时钟 · \(pomodoroDisplayText)"
     }
 
     var groupedFocusHistory: [(day: String, records: [FocusSessionRecord])] {
