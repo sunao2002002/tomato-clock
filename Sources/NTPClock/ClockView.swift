@@ -144,6 +144,10 @@ final class ClockViewModel: ObservableObject {
         return "番茄时钟 · \(pomodoroDisplayText)"
     }
 
+    var dockBadgeLabel: String? {
+        isPomodoroRunning ? pomodoroDisplayText : nil
+    }
+
     var latestHistoryPreview: [FocusSessionRecord] {
         Array(focusHistory.prefix(5))
     }
@@ -359,6 +363,7 @@ final class ClockViewModel: ObservableObject {
         let minutes = totalSeconds / 60
         let seconds = totalSeconds % 60
         pomodoroDisplayText = String(format: "%02d:%02d", minutes, seconds)
+        updateDockBadge()
     }
 
     private func playAlert() {
@@ -465,6 +470,10 @@ final class ClockViewModel: ObservableObject {
         )
 
         UNUserNotificationCenter.current().add(request)
+    }
+
+    private func updateDockBadge() {
+        NSApp.dockTile.badgeLabel = dockBadgeLabel
     }
 
     private func appendFocusHistoryRecord(at date: Date) {
